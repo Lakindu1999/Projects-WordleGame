@@ -1,1 +1,126 @@
+import sqlite3
+import random
+import datetime
 
+class Wordle:
+    def __init__(self):
+        self.words = ['ABOUT', 'ABOVE', 'ABUSE', 'ACTOR', 'ACUTE', 'ADMIT', 'ADOPT', 'ADULT', 'AFTER', 'AGAIN']
+        self.target_word = None
+        self.user = None
+        self.daily_mode = False  #Please change the True and False manually for dailymode start_game() as well
+        self.status = []
+        self.conn = sqlite3.connect('wordle.db')
+        self.cursor = self.conn.cursor()
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS users
+                     (name TEXT, status TEXT, last_played DATE, word TEXT)''')
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS games
+                     (user TEXT, status TEXT, played_date DATE, word TEXT)''')
+
+    def start_game(self, user=None, daily_mode=False, target_word=None):
+        self.user = user
+        self.daily_mode = daily_mode
+        if self.daily_mode == True:
+            self.cursor.execute("SELECT * FROM users WHERE name = ? AND last_played = ?", (self.user, datetime.date.today()))
+            if self.cursor.fetchone():
+                print("You have already played today. Please come back tomorrow.")
+                return
+        if target_word:
+            self.target_word = target_word
+        else:
+            self.target_word = random.choice(self.words)
+        self.conn.commit()
+
+    def still_playing(self):
+        return bool(self.target_word)
+
+    def stop_game(self, status):
+        if self.daily_mode == False:
+            self.cursor.execute("INSERT INTO games VALUES (?, ?, ?, ?)", (self.user, status, datetime.date.today(), self.target_word))  # Added word
+        else:
+            self.cursor.execute("INSERT INTO users VALUES (?, ?, ?, ?)", (self.user, status, datetime.date.today(), self.target_word))
+        self.conn.commit()
+        self.target_word = None
+
+    def choose_word(self):
+        return random.choice(self.words)
+
+    def run(self, guess_word=None):
+        if not guess_word:
+            guess_word = self.choose_word()
+        self.status = [2 if guess_word[i] == self.target_word[i] else 1 if guess_word[i] in self.target_word else 0 for i in range(5)]
+        return self.status
+
+    def create_user(self, name):
+        self.user = name 
+
+    def user_success_rate(self, user):
+        if self.daily_mode == False:
+            self.cursor.execute("SELECT COUNT(*) FROM games WHERE user = ? AND status = 'success'", (user,))
+            success_games = self.cursor.fetchone()[0]
+            self.cursor.execute("SELECT COUNT(*) FROM games WHERE user = ?", (user,))
+            total_games = self.cursor.fetchone()[0]
+            if total_games > 0:
+                return success_games / total_games
+            else:
+                return 0
+        else:
+            self.cursor.execute("SELECT COUNT(*) FROM users WHERE name = ? AND status = 'success'", (user,))
+            success_games = self.cursor.fetchone()[0]
+            self.cursor.execute("SELECT COUNT(*) FROM users WHERE name = ?", (user,))
+            total_games = self.cursor.fetchone()[0]
+            if total_games > 0:
+                return success_games / total_games
+            else:
+                return 0
+
+    def user_words(self, user, status):
+        if self.daily_mode == False:
+            self.cursor.execute("SELECT word FROM games WHERE user = ? AND status = ?", (user, status))
+            return [row[0] for row in self.cursor.fetchall()]
+        else:
+            self.cursor.execute("SELECT word FROM users WHERE name = ? AND status = ?", (user, status))
+            return [row[0] for row in self.cursor.fetchall()]
+
+    def word_successes(self, word):
+        if self.daily_mode == False:
+            self.cursor.execute("SELECT COUNT(*) FROM games WHERE word = ? AND status = 'success'", (word,))
+            return self.cursor.fetchone()[0]
+        else:
+            self.cursor.execute("SELECT COUNT(*) FROM users WHERE word = ? AND status = 'success'", (word,))
+            return self.cursor.fetchone()[0]
+
+    def top_words(self, status):
+        if self.daily_mode == False:
+            self.cursor.execute("SELECT word, COUNT(*) as cnt FROM games WHERE status = ? GROUP BY word ORDER BY cnt DESC", (status,))
+            return self.cursor.fetchall()
+        else:
+            self.cursor.execute("SELECT word, COUNT(*) as cnt FROM users WHERE status = ? GROUP BY word ORDER BY cnt DESC", (status,))
+            return self.cursor.fetchall()
+
+def play():
+    game = Wordle()
+    game.start_game(input("Enter your name: "))
+    count = 0
+    while game.still_playing():
+        guess_word = input("Enter your guess: ")
+        status = game.run(guess_word)
+        print(status)
+        count = count + 1
+        if count == 6:
+            print("You've Lost!")
+            game.stop_game('fail')
+            count = 0
+            break
+        if status == [2, 2, 2, 2, 2]:
+            print("Congratulations! You've guessed the word!")
+            game.stop_game('success')
+    print(f"") #scores
+    print(f"Your success rate: {game.user_success_rate(game.user)}")
+    print(f"Words you succeeded: {game.user_words(game.user, 'success')}")
+    print(f"Words you failed: {game.user_words(game.user, 'fail')}")
+    print(f"Number of users succeeded the word: {game.word_successes(game.target_word)}")
+    print(f"Top words with more successes: {game.top_words('success')}")
+    print(f"Top words with more failures: {game.top_words('fail')}")
+
+if __name__ == "__main__":
+    play()
